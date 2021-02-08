@@ -1,17 +1,31 @@
+use notify_rust::{Hint, Notification};
 use reqwest;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio;
 
 const VERSION: &str = "0.1.0";
 
-const URLS: [&str; 3] = [
-	"https://ddr0.ca/gallery.html",
-	"https://ddr0.ca/⚂/",
-	"https://ddr0.ca/⚂/ws/socket.io.js",
+struct Check<'a> {
+	url: &'a str,
+	name: &'a str,
+}
+const URLS: [Check; 3] = [
+	Check {
+		url: "https://ddr0.ca/gallery.html",
+		name: "Gallery",
+	},
+	Check {
+		url: "https://ddr0.ca/⚂/",
+		name: "Roller",
+	},
+	Check {
+		url: "https://ddr0.ca/⚂/ws/socket.io.js",
+		name: "Roller Backend",
+	},
 ];
 
 struct Query<'a> {
-	url: &'a str,
+	check: &'a Check<'a>,
 	date: Duration, //Since unix_epoch, use as_secs() to get unix time.
 	duration: Duration,
 	status: i32,
@@ -29,13 +43,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		.build()?;
 
 	let mut queries = Vec::with_capacity(URLS.len());
-	for &url in URLS.iter() {
+	for check in URLS.iter() {
+		let &Check { url, name: _ } = check;
 		let start = Instant::now();
 		let res = client.get(url).send().await;
 		//println!("res in {}ms: {:?}", duration.as_millis(), res);
 
 		let query = Query {
-			url,
+			check,
 			date: SystemTime::now()
 				.duration_since(UNIX_EPOCH)
 				.expect("System time is currently before unix epoch."),
@@ -50,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		};
 
 		log(&query);
+		alert(&query);
 		queries.push(query);
 
 		//tokio::time::sleep(Duration::new(1, 0)).await;
@@ -64,6 +80,87 @@ fn log(query: &Query) {
 		query.date.as_secs(),
 		query.status,
 		query.duration.as_millis(),
-		query.url,
+		query.check.url,
 	);
+}
+
+enum AlertAction {
+	None,
+	Warn,
+	Error,
+}
+fn alert(query: &Query) -> AlertAction {
+	let mut warning_level = AlertAction::None;
+	const SLOW_THRESHOLD: Duration = Duration::from_millis(500);
+	if query.status == 200 && query.duration > SLOW_THRESHOLD {
+		Notification::new()
+			.summary(&format!("DDR0.ca Slow {}", query.check.name).to_owned())
+			.body(
+				&format!(
+					"{} > {} for {}.",
+					query.duration.as_millis(),
+					SLOW_THRESHOLD.as_millis(),
+					query.check.url
+				)
+				.to_owned(),
+			)
+			.icon(&"warning".to_owned()) //dialog-warning?
+			.show()
+			.expect("Could not show notification.");
+		warning_level = AlertAction::Warn;
+	}
+
+	match query.status {
+		200 => warning_level,
+		201..=299 => {
+			Notification::new()
+				.summary(
+					&format!(
+						"DDR0.ca {} Unexpected HTTP {}",
+						query.check.name, query.status
+					)
+					.to_owned(),
+				)
+				.body(
+					&format!(
+						"{} returned HTTP {}, not HTTP 200 OK as expected.",
+						query.check.url, query.status
+					)
+					.to_owned(),
+				)
+				.icon(&"warning".to_owned().to_owned()) //dialog-warning?
+				.show()
+				.expect("Could not show notification.");
+			AlertAction::Warn
+		}
+		-1 => {
+			//Not necessarily, but probably, a network error.
+			Notification::new()
+				.summary(&format!("DDR0.ca {} Down", query.check.name).to_owned())
+				.body(
+					&format!(
+						"The HTTP request to {} could not be completed.",
+						query.check.url
+					)
+					.to_owned(),
+				)
+				.icon(&"error".to_owned())
+				.hint(Hint::Resident(true)) // this is not supported by all implementations
+				.timeout(0) // this however is
+				.show()
+				.expect("Could not show notification.");
+			AlertAction::Error
+		}
+		_ => {
+			Notification::new()
+				.summary(&format!("DDR0.ca {} Down", query.check.name).to_owned())
+				.body(&format!("{} returned HTTP {}.", query.check.url, query.status).to_owned())
+				.icon(&"error".to_owned())
+				.hint(Hint::Resident(true)) // this is not supported by all implementations
+				.timeout(0) // this however is
+				.show()
+				.expect("Could not show notification.");
+			AlertAction::Error
+		}
+	}
 }
