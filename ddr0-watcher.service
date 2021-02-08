@@ -1,0 +1,11 @@
+[Unit]
+Description=Report if https://ddr0.ca isn't up.
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/tmp
+ExecStart=%h/.cargo/bin/ddr0-watcher
+
+[Install]
+WantedBy=graphical.target

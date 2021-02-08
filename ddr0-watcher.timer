@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch https://ddr0.ca, reporting if it's down.
+
+[Timer]
+OnCalendar=*-*-* *:0/15:*
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

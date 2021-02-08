@@ -65,10 +65,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 		};
 
 		log(&query);
-		alert(&query);
+		if alert(&query) == AlertAction::Error {
+			break;
+		}
 		queries.push(query);
 
-		//tokio::time::sleep(Duration::new(1, 0)).await;
+		tokio::time::sleep(Duration::new(1, 0)).await;
 	}
 
 	Ok(())
@@ -84,6 +86,7 @@ fn log(query: &Query) {
 	);
 }
 
+#[derive(PartialEq)]
 enum AlertAction {
 	None,
 	Warn,
@@ -95,16 +98,8 @@ fn alert(query: &Query) -> AlertAction {
 	if query.status == 200 && query.duration > SLOW_THRESHOLD {
 		Notification::new()
 			.summary(&format!("DDR0.ca Slow {}", query.check.name).to_owned())
-			.body(
-				&format!(
-					"{} > {} for {}.",
-					query.duration.as_millis(),
-					SLOW_THRESHOLD.as_millis(),
-					query.check.url
-				)
-				.to_owned(),
-			)
-			.icon(&"warning".to_owned()) //dialog-warning?
+			.body(&format!("{} > {} for {}.", query.duration.as_millis(), SLOW_THRESHOLD.as_millis(), query.check.url).to_owned())
+			.icon(&"dialog-warning".to_owned()) //dialog-warning?
 			.show()
 			.expect("Could not show notification.");
 		warning_level = AlertAction::Warn;
@@ -114,21 +109,9 @@ fn alert(query: &Query) -> AlertAction {
 		200 => warning_level,
 		201..=299 => {
 			Notification::new()
-				.summary(
-					&format!(
-						"DDR0.ca {} Unexpected HTTP {}",
-						query.check.name, query.status
-					)
-					.to_owned(),
-				)
-				.body(
-					&format!(
-						"{} returned HTTP {}, not HTTP 200 OK as expected.",
-						query.check.url, query.status
-					)
-					.to_owned(),
-				)
-				.icon(&"warning".to_owned().to_owned()) //dialog-warning?
+				.summary(&format!("DDR0.ca {} Unexpected HTTP {}", query.check.name, query.status).to_owned())
+				.body(&format!("{} returned HTTP {}, not HTTP 200 OK as expected.", query.check.url, query.status).to_owned())
+				.icon(&"dialog-warning".to_owned().to_owned()) //dialog-warning?
 				.show()
 				.expect("Could not show notification.");
 			AlertAction::Warn
@@ -137,14 +120,8 @@ fn alert(query: &Query) -> AlertAction {
 			//Not necessarily, but probably, a network error.
 			Notification::new()
 				.summary(&format!("DDR0.ca {} Down", query.check.name).to_owned())
-				.body(
-					&format!(
-						"The HTTP request to {} could not be completed.",
-						query.check.url
-					)
-					.to_owned(),
-				)
-				.icon(&"error".to_owned())
+				.body(&format!("The HTTP request to {} could not be completed.", query.check.url).to_owned())
+				.icon(&"dialog-error".to_owned())
 				.hint(Hint::Resident(true)) // this is not supported by all implementations
 				.timeout(0) // this however is
 				.show()
@@ -155,7 +132,7 @@ fn alert(query: &Query) -> AlertAction {
 			Notification::new()
 				.summary(&format!("DDR0.ca {} Down", query.check.name).to_owned())
 				.body(&format!("{} returned HTTP {}.", query.check.url, query.status).to_owned())
-				.icon(&"error".to_owned())
+				.icon(&"dialog-error".to_owned())
 				.hint(Hint::Resident(true)) // this is not supported by all implementations
 				.timeout(0) // this however is
 				.show()
