@@ -7,6 +7,7 @@ const VERSION: &str = "0.2.0";
 
 struct Job<'a> {
 	project: &'a str,
+	redirects: usize,
 	checks: Vec<Check<'a>>,
 }
 struct Check<'a> {
@@ -33,6 +34,7 @@ fn jobs() -> Vec<Job<'static>> {
 	vec![
 		Job {
 			project: "ddr0.ca",
+			redirects: 0,
 			checks: vec![
 				Check {
 					component: "Gallery",
@@ -50,6 +52,7 @@ fn jobs() -> Vec<Job<'static>> {
 		},
 		Job {
 			project: "ravelights.ca",
+			redirects: 2,
 			checks: vec![
 				Check {
 					component: "Landing Page",
@@ -66,50 +69,58 @@ fn jobs() -> Vec<Job<'static>> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+	let jobs = jobs();
+	let mut handles = Vec::with_capacity(jobs.len());
+	for job in jobs.iter() {
+		handles.push(run(job))
+	}
+	
+	futures::future::join_all(handles).await;
+	
+	Ok(())
+}
+
+async fn run(job: &Job<'_>) -> Result<(), Box<dyn std::error::Error>> {
 	let client = reqwest::Client::builder()
 		.https_only(true)
-		.redirect(reqwest::redirect::Policy::limited(2))
-		.timeout(Duration::from_secs(30)) //max 999 for now, output is overwritten in place in columnar format
-		.pool_idle_timeout(Duration::from_secs(2))
+		.redirect(reqwest::redirect::Policy::limited(job.redirects))
+		.timeout(Duration::from_secs(2)) //max 999 for now, output is overwritten in place in columnar format
+		.pool_idle_timeout(Duration::from_secs(1))
 		.user_agent(format!("DDR's Watcher {}", VERSION))
 		//.http2_prior_knowledge() //Doesn't connect, even though http/2 is supported.
 		.build()?;
-
-	let jobs = jobs();
-	for job in jobs.iter() {
-		let mut queries = Vec::with_capacity(job.checks.len());
-		for check in job.checks.iter() {
-			let &Check { url, component: _ } = check;
-			let start = Instant::now();
-			let res = client.get(url).send().await;
-			//println!("res in {}ms: {:?}", duration.as_millis(), res);
-
-			let query = Query {
-				job,
-				check,
-				date: SystemTime::now()
-					.duration_since(UNIX_EPOCH)
-					.expect("System time is currently before unix epoch."),
-				duration: start.elapsed(),
-				status: match res {
-					Ok(resp) => resp.status().as_u16().into(),
-					Err(e) => match e.status() {
-						Some(status) => status.as_u16().into(),
-						None => -1, //Timeout, construction problem, etc.
-					},
+	
+	let mut queries = Vec::with_capacity(job.checks.len());
+	for check in job.checks.iter() {
+		let &Check { url, component: _ } = check;
+		let start = Instant::now();
+		let res = client.get(url).send().await;
+		
+		let query = Query {
+			job,
+			check,
+			date: SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.expect("System time is currently before unix epoch."),
+			duration: start.elapsed(),
+			status: match res {
+				Ok(resp) => resp.status().as_u16().into(),
+				Err(e) => match e.status() {
+					Some(status) => status.as_u16().into(),
+					None => -1, //Timeout, construction problem, etc.
 				},
-			};
+			},
+		};
 
-			log(&query);
-			if alert(&query) == AlertAction::Error {
-				break;
-			}
-			queries.push(query);
-
-			tokio::time::sleep(Duration::new(1, 0)).await;
+		log(&query);
+		if alert(&query) == AlertAction::Error {
+			break;
 		}
-	}
+		queries.push(query);
 
+		tokio::time::sleep(Duration::new(1, 0)).await;
+	}
+	
 	Ok(())
 }
 
