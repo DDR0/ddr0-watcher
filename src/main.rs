@@ -1,7 +1,9 @@
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::error::Error;
+use tokio;
+use futures::future;
 use notify_rust::{Hint, Notification};
 use reqwest;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio;
 
 const VERSION: &str = "0.2.0";
 
@@ -68,19 +70,17 @@ fn jobs() -> Vec<Job<'static>> {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-	let jobs = jobs();
-	let mut handles = Vec::with_capacity(jobs.len());
-	for job in jobs.iter() {
-		handles.push(run(job))
-	}
-	
-	futures::future::join_all(handles).await;
-	
-	Ok(())
+async fn main() {
+	let res = future::join_all(jobs().iter().map(run)).await;
+	std::process::exit(
+		match res.into_iter().collect() {
+			Ok(()) => 0,
+			Err(_) => 1,
+		}
+	)
 }
 
-async fn run(job: &Job<'_>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(job: &Job<'_>) -> Result<(), Box<dyn Error>> {
 	let client = reqwest::Client::builder()
 		.https_only(true)
 		.redirect(reqwest::redirect::Policy::limited(job.redirects))
@@ -89,13 +89,12 @@ async fn run(job: &Job<'_>) -> Result<(), Box<dyn std::error::Error>> {
 		.user_agent(format!("DDR's Watcher {}", VERSION))
 		//.http2_prior_knowledge() //Doesn't connect, even though http/2 is supported.
 		.build()?;
-	
-	let mut queries = Vec::with_capacity(job.checks.len());
+
 	for check in job.checks.iter() {
 		let &Check { url, component: _ } = check;
 		let start = Instant::now();
 		let res = client.get(url).send().await;
-		
+
 		let query = Query {
 			job,
 			check,
@@ -114,13 +113,12 @@ async fn run(job: &Job<'_>) -> Result<(), Box<dyn std::error::Error>> {
 
 		log(&query);
 		if alert(&query) == AlertAction::Error {
-			break;
+			return Err("job failed")?
 		}
-		queries.push(query);
 
 		tokio::time::sleep(Duration::new(1, 0)).await;
 	}
-	
+
 	Ok(())
 }
 
