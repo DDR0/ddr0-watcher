@@ -5,7 +5,7 @@ use futures::future;
 use notify_rust::{Hint, Notification};
 use reqwest;
 
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "0.2.1";
 
 struct Job<'a> {
 	project: &'a str,
@@ -84,7 +84,7 @@ async fn run(job: &Job<'_>) -> Result<(), Box<dyn Error>> {
 	let client = reqwest::Client::builder()
 		.https_only(true)
 		.redirect(reqwest::redirect::Policy::limited(job.redirects))
-		.timeout(Duration::from_secs(2)) //max 999 for now, output is overwritten in place in columnar format
+		.timeout(Duration::from_secs(10)) //max 999 for now, output is overwritten in place in columnar format
 		.pool_idle_timeout(Duration::from_secs(1))
 		.user_agent(format!("DDR's Watcher {}", VERSION))
 		//.http2_prior_knowledge() //Doesn't connect, even though http/2 is supported.
@@ -134,7 +134,7 @@ fn log(query: &Query) {
 
 fn alert(query: &Query) -> AlertAction {
 	let mut warning_level = AlertAction::None;
-	const SLOW_THRESHOLD: Duration = Duration::from_millis(500);
+	const SLOW_THRESHOLD: Duration = Duration::from_millis(1000);
 	if query.status == 200 && query.duration > SLOW_THRESHOLD {
 		Notification::new()
 			.summary(&format!("{} Slow {}", query.job.project, query.check.component).to_owned())

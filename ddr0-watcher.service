@@ -1,6 +1,6 @@
 [Unit]
 Description=Report if https://ddr0.ca isn't up.
-After=network.target
+After=network-online.target
 
 [Service]
 Type=oneshot
